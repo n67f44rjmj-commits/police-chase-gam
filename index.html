@@ -1,0 +1,223 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>POLICE PATROL: CITY WATCH</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#294735;color:white;font-family:Arial,sans-serif;touch-action:none}
+canvas{position:absolute;width:100%;height:100%;inset:0}
+#hud{position:absolute;inset:0;pointer-events:none}
+.panel{background:#081522eF;padding:10px;border:1px solid #ffffff44;border-radius:12px}
+#top{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;gap:6px;font-size:12px}
+#title{font-weight:900;font-size:14px;letter-spacing:1px}
+#stats{text-align:right;line-height:1.6}
+#call{position:absolute;top:90px;left:50%;transform:translateX(-50%);width:85%;max-width:340px;text-align:center;display:none;font-size:12px}
+#call strong{display:block;color:#ffd166;margin-bottom:5px}
+#message{position:absolute;top:43%;left:50%;transform:translate(-50%,-50%);font-size:18px;font-weight:bold;text-align:center;text-shadow:0 2px 5px black;width:90%;opacity:0}
+#controls{position:absolute;bottom:10px;left:8px;right:8px;display:flex;justify-content:space-between;align-items:end;gap:5px}
+#drive{display:grid;grid-template-columns:repeat(2,58px);gap:6px}
+#actions{display:flex;flex-direction:column;gap:6px}
+button{appearance:none;-webkit-appearance:none;border:1px solid #ffffff66;background:#10283cf5;color:white;border-radius:13px;font-size:18px;font-weight:bold;height:56px;min-width:58px;touch-action:none;user-select:none}
+button small{display:block;font-size:9px}
+button.active,button:active{background:#087bc0}
+#actions button{width:76px;height:48px;font-size:15px}
+#startscreen{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:90%;max-width:400px;pointer-events:auto}
+#startscreen h1{margin:0;font-size:25px}
+#startscreen p{font-size:13px;line-height:1.5;color:#d3e3ef}
+#start{width:100%;height:48px;background:#087bc0}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div id="top">
+  <div class="panel"><div id="title">🚔 CITY WATCH</div><small>OPEN-WORLD POLICE PATROL</small></div>
+  <div class="panel" id="stats">REP: <b id="rep">0</b><br>CREDITS: $<b id="cash">250</b><br>SPEED: <b id="speed">0</b></div>
+ </div>
+ <div id="call" class="panel"><strong id="calltitle">DISPATCH</strong><span id="calltext"></span></div>
+ <div id="message"></div>
+ <div id="controls">
+  <div id="drive">
+   <button id="left">◀<small>LEFT</small></button>
+   <button id="right">▶<small>RIGHT</small></button>
+   <button id="brake">▼<small>BRAKE</small></button>
+   <button id="gas">▲<small>GAS</small></button>
+  </div>
+  <div id="actions">
+   <button id="siren">🚨<small>SIREN</small></button>
+   <button id="interact">✋<small>INTERACT</small></button>
+  </div>
+ </div>
+ <div id="startscreen" class="panel">
+  <h1>POLICE PATROL</h1>
+  <b style="color:#65c5ff">CITY WATCH</b>
+  <p>Patrol the city, answer dispatch calls, chase suspects, and make arrests.</p>
+  <p>Hold GAS to drive. Use LEFT and RIGHT to steer. Brake near a suspect, then press INTERACT.</p>
+  <button id="start">START PATROL</button>
+ </div>
+</div>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const canvas=$('game'),ctx=canvas.getContext('2d');
+let W,H,D=1;
+function resize(){D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*D;canvas.height=H*D;ctx.setTransform(D,0,0,D,0,0)}
+window.addEventListener('resize',resize);resize();
+
+const SIZE=2400,STEP=200;
+let player={x:1200,y:1200,a:-Math.PI/2,v:0};
+let cam={x:1200,y:1200};
+let input={left:false,right:false,gas:false,brake:false};
+let started=false,sirens=false,rep=0,cash=250,call=null,suspect=null,nextCall=0,count=0;
+let seed=55;
+function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+const buildings=[];
+for(let x=40;x<SIZE;x+=STEP)for(let y=40;y<SIZE;y+=STEP){
+ if(x%600!==400&&y%600!==400&&rnd()>.15)
+ buildings.push({x:x+15+rnd()*20,y:y+15+rnd()*20,w:70+rnd()*40,h:65+rnd()*40,c:['#64747b','#77766b','#526d7a','#687467'][Math.floor(rnd()*4)]});
+}
+function toast(t){$('message').textContent=t;$('message').style.opacity=1;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('message').style.opacity=0,1800)}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function roadPoint(){return{x:clamp(Math.round((150+rnd()*(SIZE-300))/600)*600+(rnd()-.5)*35,30,SIZE-30),y:clamp(Math.round((150+rnd()*(SIZE-300))/600)*600+(rnd()-.5)*35,30,SIZE-30)}}
+function dispatch(){
+ if(!started||call)return;
+ let p=roadPoint();
+ call={x:p.x,y:p.y};
+ suspect={x:p.x+35,y:p.y+12,a:rnd()*6.28,moving:count%2===1};
+ $('call').style.display='block';
+ $('calltitle').textContent='DISPATCH: '+['SUSPICIOUS VEHICLE','ROBBERY REPORT','TRAFFIC INCIDENT'][count%3];
+ $('calltext').textContent='Reach the gold marker and approach the suspect.';
+ toast('DISPATCH CALL RECEIVED!');
+}
+function car(x,y,a,color,police=false){
+ ctx.save();ctx.translate(x,y);ctx.rotate(a);
+ ctx.fillStyle='#151a20';ctx.fillRect(-14,-9,29,18);
+ ctx.fillStyle=color;ctx.fillRect(-15,-7,30,14);
+ ctx.fillStyle='#9edcff';ctx.fillRect(-3,-5,10,10);
+ if(police){
+  ctx.fillStyle='#fff';ctx.fillRect(-13,-7,8,14);
+  let f=Math.floor(Date.now()/150)%2===0;
+  ctx.fillStyle=sirens?(f?'red':'#168bff'):'#168bff';ctx.fillRect(-3,-10,6,3);
+  ctx.fillStyle=sirens?(f?'#168bff':'red'):'red';ctx.fillRect(3,-10,6,3);
+ }
+ ctx.fillStyle='#fff0b2';ctx.fillRect(13,-5,2,3);ctx.fillRect(13,2,2,3);
+ ctx.restore();
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle='#355844';ctx.fillRect(0,0,W,H);
+ cam.x+=(player.x-cam.x)*.12;cam.y+=(player.y-cam.y)*.12;
+ ctx.save();ctx.translate(W/2-cam.x,H/2-cam.y);
+ ctx.fillStyle='#30383d';
+ for(let x=0;x<=SIZE;x+=600)ctx.fillRect(x-28,0,56,SIZE);
+ for(let y=0;y<=SIZE;y+=600)ctx.fillRect(0,y-28,SIZE,56);
+ ctx.strokeStyle='#d4c77c';ctx.lineWidth=2;ctx.setLineDash([14,14]);
+ for(let x=0;x<=SIZE;x+=600){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,SIZE);ctx.stroke()}
+ for(let y=0;y<=SIZE;y+=600){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(SIZE,y);ctx.stroke()}
+ ctx.setLineDash([]);
+ buildings.forEach(b=>{
+  if(b.x<cam.x-W/2-100||b.x>cam.x+W/2+100||b.y<cam.y-H/2-100||b.y>cam.y+H/2+100)return;
+  ctx.fillStyle='#203c2c';ctx.fillRect(b.x+5,b.y+6,b.w,b.h);
+  ctx.fillStyle=b.c;ctx.fillRect(b.x,b.y,b.w,b.h);
+  ctx.fillStyle='#b5c6c7';
+  for(let wx=b.x+10;wx<b.x+b.w-5;wx+=20){ctx.fillRect(wx,b.y+9,8,6);ctx.fillRect(wx,b.y+b.h-15,8,6)}
+ });
+ for(let i=0;i<18;i++){
+  let x=(i*173+180)%SIZE,y=Math.round(((i*241+100)%SIZE)/600)*600;
+  car(x,y,0,['#b4b9bd','#9baf9d','#d2a35f'][i%3]);
+ }
+ if(call){
+  ctx.beginPath();ctx.arc(call.x,call.y,24+Math.sin(Date.now()/180)*4,0,7);
+  ctx.strokeStyle='#ffd166';ctx.lineWidth=4;ctx.stroke();
+  ctx.fillStyle='#ffd166';ctx.font='bold 20px Arial';ctx.textAlign='center';ctx.fillText('!',call.x,call.y+7);
+ }
+ if(suspect)car(suspect.x,suspect.y,suspect.a,'#c47c45');
+ car(player.x,player.y,player.a,'#f4f5f5',true);
+ ctx.restore();
+ if(call){
+  let d=Math.round(Math.hypot(call.x-player.x,call.y-player.y));
+  ctx.fillStyle='#ffd166';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.fillText('DISPATCH DISTANCE: '+d+' m',W/2,H-85);
+ }
+ $('speed').textContent=Math.round(Math.abs(player.v)*18);
+ $('rep').textContent=rep;$('cash').textContent=cash;
+ requestAnimationFrame(draw);
+}
+let previous=0;
+function update(t){
+ let dt=Math.min(((t-previous)||16.7)/16.7,2);previous=t;
+ if(started){
+  if(input.gas)player.v=Math.min(player.v+.09*dt,5);
+  else player.v*=Math.pow(.985,dt);
+  if(input.brake)player.v*=Math.pow(.87,dt);
+  let s=(input.right?1:0)-(input.left?1:0);
+  player.a+=s*(.045+Math.min(Math.abs(player.v),4)*.012)*dt*(player.v<0?-1:1);
+  player.x=clamp(player.x+Math.cos(player.a)*player.v*dt*2.2,15,SIZE-15);
+  player.y=clamp(player.y+Math.sin(player.a)*player.v*dt*2.2,15,SIZE-15);
+  if(suspect&&call&&suspect.moving){
+   let dx=player.x-suspect.x,dy=player.y-suspect.y;
+   if(Math.hypot(dx,dy)<230){
+    suspect.a=Math.atan2(dy,dx)+Math.sin(t/400)*.5;
+    suspect.x-=Math.cos(suspect.a)*.9*dt;suspect.y-=Math.sin(suspect.a)*.9*dt;
+   }else{suspect.x+=Math.cos(suspect.a)*.6*dt;suspect.y+=Math.sin(suspect.a)*.6*dt}
+   suspect.x=clamp(suspect.x,20,SIZE-20);suspect.y=clamp(suspect.y,20,SIZE-20);
+  }
+  if(!call&&t>nextCall)dispatch();
+ }
+ requestAnimationFrame(update);
+}
+
+// Pointer events work with touchscreens. Buttons keep working while held.
+function hold(id,key){
+ const b=$(id);
+ const down=e=>{e.preventDefault();if(!started)return;input[key]=true;b.classList.add('active');try{b.setPointerCapture(e.pointerId)}catch(err){}};
+ const up=e=>{e.preventDefault();input[key]=false;b.classList.remove('active')};
+ b.addEventListener('pointerdown',down);
+ ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,up));
+ b.addEventListener('contextmenu',e=>e.preventDefault());
+}
+hold('left','left');hold('right','right');hold('gas','gas');hold('brake','brake');
+
+$('start').addEventListener('click',()=>{
+ if(started)return;
+ started=true;$('startscreen').style.display='none';
+ toast('YOU ARE ON DUTY, OFFICER!');
+ nextCall=performance.now()+1400;
+});
+$('siren').addEventListener('click',()=>{
+ if(!started){toast('START YOUR SHIFT FIRST');return}
+ sirens=!sirens;$('siren').classList.toggle('active',sirens);
+ toast(sirens?'SIREN ON':'SIREN OFF');
+});
+$('interact').addEventListener('click',()=>{
+ if(!started){toast('START YOUR SHIFT FIRST');return}
+ if(!call||!suspect){toast('NO ACTIVE CALL — KEEP PATROLLING');return}
+ const d=Math.hypot(player.x-suspect.x,player.y-suspect.y);
+ if(d<80&&Math.abs(player.v)<2.5){
+  rep+=100;cash+=75;count++;call=null;suspect=null;
+  $('call').style.display='none';nextCall=performance.now()+4000;
+  toast('ARREST SUCCESSFUL! +100 REP +$75');
+ }else if(d<120)toast('SLOW DOWN TO INTERACT');
+ else toast('TOO FAR AWAY — FOLLOW THE GOLD MARKER');
+});
+// Keyboard support for testing.
+window.addEventListener('keydown',e=>{
+ if(e.key==='ArrowLeft'||e.key==='a')input.left=true;
+ if(e.key==='ArrowRight'||e.key==='d')input.right=true;
+ if(e.key==='ArrowUp'||e.key==='w')input.gas=true;
+ if(e.key==='ArrowDown'||e.key==='s')input.brake=true;
+});
+window.addEventListener('keyup',e=>{
+ if(e.key==='ArrowLeft'||e.key==='a')input.left=false;
+ if(e.key==='ArrowRight'||e.key==='d')input.right=false;
+ if(e.key==='ArrowUp'||e.key==='w')input.gas=false;
+ if(e.key==='ArrowDown'||e.key==='s')input.brake=false;
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)Object.keys(input).forEach(k=>input[k]=false)});
+requestAnimationFrame(update);requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
